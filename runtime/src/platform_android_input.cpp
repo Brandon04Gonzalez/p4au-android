@@ -64,15 +64,16 @@ struct Touch {
     Stick stick;
     uint64_t button;
     uint64_t down_ns;
+    bool dpad;
 };
 std::vector<Touch> g_touches;
 // A quick tap still reaches the game: a button let go sooner than kMinHoldNs after it went down stays held until
-// then (some P5R menus missed taps of 100-200 ms that the game had read on several frames).
+// then, unless tapped again (so fast button mashing always registers distinct presses).
 struct Latch {
     uint64_t button, until_ns;
 };
 std::vector<Latch> g_latched;
-constexpr uint64_t kMinHoldNs = 150'000'000;
+constexpr uint64_t kMinHoldNs = 25'000'000;
 
 void release_touch(const Touch& t, uint64_t now) {
     if (t.button && now < t.down_ns + kMinHoldNs) g_latched.push_back({t.button, t.down_ns + kMinHoldNs});
@@ -227,13 +228,20 @@ int32_t on_input(android_app*, AInputEvent* e) {
         touch_buttons(drawn);
         if (drawn) {  // a drawn layout (touch_layout.cpp): its buttons first, the rest of the left half is the stick
             uint64_t b = touch_hit(x / g_w, y / g_h, g_w / g_h);
+            if (b) {
+                g_latched.erase(std::remove_if(g_latched.begin(), g_latched.end(),
+                                               [&](const Latch& l) { return (l.button & b) != 0; }),
+                                g_latched.end());
+            }
+            bool dpad = (b & (kUp | kDown | kLeft | kRight)) != 0;
             bool left = !b && touch_stick_side(x / g_w);
             Stick stick = b ? kNoStick : left ? kLeftStick : touch_right_stick() ? kRightStick : kNoStick;
-            if (b || stick) g_touches.push_back({AMotionEvent_getPointerId(e, index), x, y, x, y, stick, b, now});
+            if (b || stick) g_touches.push_back({AMotionEvent_getPointerId(e, index), x, y, x, y, stick, b, now, dpad});
         } else {
             bool left = x < g_w * 0.5f;
+            uint64_t b = left ? 0 : touch_button(x, y);
             g_touches.push_back({AMotionEvent_getPointerId(e, index), x, y, x, y, left ? kLeftStick : kNoStick,
-                                 left ? 0 : touch_button(x, y), now});
+                                 b, now, false});
         }
     } else if (kind == AMOTION_EVENT_ACTION_UP || kind == AMOTION_EVENT_ACTION_POINTER_UP ||
                kind == AMOTION_EVENT_ACTION_CANCEL) {
@@ -247,12 +255,43 @@ int32_t on_input(android_app*, AInputEvent* e) {
                                        }),
                         g_touches.end());
     } else if (kind == AMOTION_EVENT_ACTION_MOVE) {
+        size_t drawn = 0;
+        const TouchButton* btns = touch_buttons(drawn);
         for (size_t k = 0; k < AMotionEvent_getPointerCount(e); k++) {
             int32_t id = AMotionEvent_getPointerId(e, k);
             for (auto& t : g_touches)
                 if (t.id == id) {
                     t.x = AMotionEvent_getX(e, k);
                     t.y = AMotionEvent_getY(e, k);
+                    if (drawn && t.stick == kNoStick) {
+                        uint64_t hit = touch_hit(t.x / g_w, t.y / g_h, g_w / g_h);
+                        if (t.dpad) {
+                            constexpr uint64_t kDpadMask = kUp | kDown | kLeft | kRight;
+                            if (hit & kDpadMask) {
+                                t.button = hit & kDpadMask;
+                            } else {
+                                float cx = 0, cy = 0;
+                                int dn = 0;
+                                for (size_t bi = 0; bi < drawn; bi++)
+                                    if (btns[bi].button & kDpadMask) cx += btns[bi].x, cy += btns[bi].y, dn++;
+                                if (dn > 0) {
+                                    cx /= dn, cy /= dn;
+                                    float dx = (t.x / g_w - cx) * (g_w / g_h), dy = t.y / g_h - cy;
+                                    float dist = std::hypot(dx, dy);
+                                    if (dist > 0.02f && dist < 0.22f) {
+                                        uint64_t dir = 0;
+                                        if (dx > 0.38f * dist) dir |= kRight;
+                                        else if (dx < -0.38f * dist) dir |= kLeft;
+                                        if (dy > 0.38f * dist) dir |= kDown;
+                                        else if (dy < -0.38f * dist) dir |= kUp;
+                                        if (dir) t.button = dir;
+                                    }
+                                }
+                            }
+                        } else if (hit) {
+                            t.button = hit;
+                        }
+                    }
                 }
         }
     }

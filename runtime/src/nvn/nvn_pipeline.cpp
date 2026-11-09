@@ -712,9 +712,13 @@ PipelineKey canonical_key(const PipelineKey& in) {
         if (in.depth.depth_test) k.depth.depth_func = in.depth.depth_func;
         if (in.depth.stencil_test) {  // field by field: the struct has padding bytes the key compares
             k.depth.stencil_test = 1;
+            int active_f = (in.depth.stencil_func[0] != 8 || in.depth.depth_pass[0] != 1 ||
+                            in.depth.stencil_fail[0] != 1 || in.depth.depth_fail[0] != 1)
+                               ? 0
+                               : 1;
             for (int f = 0; f < 2; f++) {
-                k.depth.stencil_func[f] = in.depth.stencil_func[f], k.depth.stencil_fail[f] = in.depth.stencil_fail[f];
-                k.depth.depth_fail[f] = in.depth.depth_fail[f], k.depth.depth_pass[f] = in.depth.depth_pass[f];
+                k.depth.stencil_func[f] = in.depth.stencil_func[active_f], k.depth.stencil_fail[f] = in.depth.stencil_fail[active_f];
+                k.depth.depth_fail[f] = in.depth.depth_fail[active_f], k.depth.depth_pass[f] = in.depth.depth_pass[active_f];
             }
         }
     }
@@ -860,11 +864,15 @@ std::unique_ptr<PipeBuild> prepare_graphics_pipeline(const PipelineKey& key, con
     }
     ds.stencilTestEnable = has_depth && key.depth.stencil_test && !std::getenv("NX_NO_STENCIL");
     VkStencilOpState* faces[2] = {&ds.front, &ds.back};
+    int active_f = (key.depth.stencil_func[0] != 8 || key.depth.depth_pass[0] != 1 ||
+                    key.depth.stencil_fail[0] != 1 || key.depth.depth_fail[0] != 1)
+                       ? 0
+                       : 1;
     for (int f = 0; f < 2; f++) {
-        faces[f]->failOp = vk_stencil_op(key.depth.stencil_fail[f]);
-        faces[f]->depthFailOp = vk_stencil_op(key.depth.depth_fail[f]);
-        faces[f]->passOp = vk_stencil_op(key.depth.depth_pass[f]);
-        faces[f]->compareOp = vk_compare(key.depth.stencil_func[f]);
+        faces[f]->failOp = vk_stencil_op(key.depth.stencil_fail[active_f]);
+        faces[f]->depthFailOp = vk_stencil_op(key.depth.depth_fail[active_f]);
+        faces[f]->passOp = vk_stencil_op(key.depth.depth_pass[active_f]);
+        faces[f]->compareOp = vk_compare(key.depth.stencil_func[active_f]);
         faces[f]->compareMask = faces[f]->writeMask = 0xFF;  // dynamic: SetStencilValueMask / SetStencilMask
     }
 

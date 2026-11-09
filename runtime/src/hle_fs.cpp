@@ -133,6 +133,10 @@ std::string cstr(uint64_t p) { return p ? std::string(reinterpret_cast<const cha
 
 fs::path mod_file(const std::string& rel);
 
+// Mounts served from the game image (the RomFS read in place). They keep a host folder in g_mounts too, only so the
+// runtime's virtual files (add_virtual_file) still match their paths.
+std::map<std::string, bool> g_image_mounts;
+
 // "mount:/a/b" -> host path; empty when the mount is unknown.
 fs::path resolve(const std::string& guest) {
     auto colon = guest.find(':');
@@ -141,7 +145,7 @@ fs::path resolve(const std::string& guest) {
     if (it == g_mounts.end()) return {};
     std::string rest = guest.substr(colon + 1);
     while (!rest.empty() && (rest[0] == '/' || rest[0] == '\\')) rest.erase(0, 1);
-    if (it->first == "rom") {
+    if (it->first == "rom" || g_image_mounts.count(it->first)) {
         if (fs::path mp = mod_file(game_image_path(rest)); !mp.empty()) return mp;
     }
     return it->second / fs::u8path(rest);
@@ -152,10 +156,6 @@ void mount(const std::string& name, const fs::path& p) {
     g_mounts[name] = p;
     log("fs: mounted %s: -> %s", name.c_str(), p.string().c_str());
 }
-
-// Mounts served from the game image (the RomFS read in place). They keep a host folder in g_mounts too, only so the
-// runtime's virtual files (add_virtual_file) still match their paths.
-std::map<std::string, bool> g_image_mounts;
 
 // The RomFS path of `guest` when its mount is served from the game image.
 bool image_rel(const std::string& guest, std::string& rel) {
@@ -829,6 +829,16 @@ std::string guest_to_host_path(const std::string& guest) {
     std::lock_guard lk(g_fs);
     fs::path p = resolve(guest);
     return p.empty() ? std::string() : utf8(p);
+}
+
+const nxi::GameImage::Entry* guest_to_image_entry(const std::string& guest) {
+    const nxi::GameImage* img = game_image();
+    if (!img) return nullptr;
+    std::lock_guard lk(g_fs);
+    std::string rel;
+    if (!image_rel(guest, rel)) return nullptr;
+    const nxi::GameImage::Entry* e = img->find(rel);
+    return (e && !e->dir) ? e : nullptr;
 }
 
 std::string read_game_file(const std::string& relative_to_romfs) {

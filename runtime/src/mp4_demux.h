@@ -8,6 +8,8 @@
 #include <string>
 #include <vector>
 
+#include "game_image.h"
+
 namespace nx::mp4 {
 
 struct Sample {
@@ -35,9 +37,14 @@ struct Track {
 
 struct File {
     FILE* f = nullptr;
+    const nxi::GameImage* img = nullptr;
+    const nxi::GameImage::Entry* entry = nullptr;
     std::vector<Track> tracks;
     ~File();
     bool open(const std::string& host_path, std::string& error);
+    bool open(const nxi::GameImage* image, const nxi::GameImage::Entry* e, std::string& error);
+    bool read_at(uint64_t offset, void* dst, size_t size);
+    bool parse_moov(std::string& error);
     // A sample's bytes as the decoder takes them: AVC length prefixes become Annex-B start codes.
     bool read(const Track& t, const Sample& s, std::vector<uint8_t>& out);
 };

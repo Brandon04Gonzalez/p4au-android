@@ -115,19 +115,13 @@ bool raster_command(const Cmd& c) {
 // Before each draw (every pipeline declares these dynamic, nvn_pipeline.cpp, so they must all be set).
 void raster_dynamic(VkCommandBuffer cb, bool slack) {
     const State& s = g_state;
-    auto set = [&](PFN_vkCmdSetStencilReference fn, const uint8_t* v) {  // the three setters share the signature
-        if (v[0] == v[1]) {
-            fn(cb, VK_STENCIL_FACE_FRONT_AND_BACK, v[0]);
-        } else {
-            fn(cb, VK_STENCIL_FACE_FRONT_BIT, v[0]);
-            fn(cb, VK_STENCIL_FACE_BACK_BIT, v[1]);
-        }
-    };
     static const bool old = std::getenv("NX_OLD_STENCIL") != nullptr;  // bisecting: reference 0, masks 0xFF
-    static const uint8_t zero[2] = {0, 0}, all[2] = {0xFF, 0xFF};
-    set(p_vkCmdSetStencilReference, old ? zero : s.stencil_ref);
-    set(p_vkCmdSetStencilCompareMask, old ? all : s.stencil_compare_mask);
-    set(p_vkCmdSetStencilWriteMask, old ? all : s.stencil_write_mask);
+    uint8_t s_ref = old ? 0 : (s.stencil_ref[0] ? s.stencil_ref[0] : s.stencil_ref[1]);
+    uint8_t s_cmask = old ? 0xFF : ((s.stencil_compare_mask[0] != 0xFF) ? s.stencil_compare_mask[0] : s.stencil_compare_mask[1]);
+    uint8_t s_wmask = old ? 0xFF : ((s.stencil_write_mask[0] != 0xFF) ? s.stencil_write_mask[0] : s.stencil_write_mask[1]);
+    p_vkCmdSetStencilReference(cb, VK_STENCIL_FACE_FRONT_AND_BACK, s_ref);
+    p_vkCmdSetStencilCompareMask(cb, VK_STENCIL_FACE_FRONT_AND_BACK, s_cmask);
+    p_vkCmdSetStencilWriteMask(cb, VK_STENCIL_FACE_FRONT_AND_BACK, s_wmask);
     // Depth bias. NVN's call has glPolygonOffsetClamp's meaning, which is Vulkan's: units in minimum resolvable
     // depth differences (r), factor per unit of slope. Ryujinx and yuzu halve the units, but that is of the Maxwell
     // register the driver writes (units * 2); the API value needs no scaling. What does differ: D24 targets are

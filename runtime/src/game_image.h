@@ -18,4 +18,7 @@ const nxi::GameImage* game_image();
 // A RomFS path for the image: '/'-separated, no leading or doubled slashes, "." parts dropped.
 std::string game_image_path(const std::string& path);
 
+// The RomFS entry of a guest path ("rom:/a/b", "_nx:/a/b") when its mount is served from game_image(), or nullptr.
+const nxi::GameImage::Entry* guest_to_image_entry(const std::string& guest);
+
 }  // namespace nx

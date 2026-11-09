@@ -238,27 +238,44 @@ File::~File() {
     if (f) std::fclose(f);
 }
 
+bool File::read_at(uint64_t offset, void* dst, size_t size) {
+    if (f) return seek(f, offset) && std::fread(dst, 1, size, f) == size;
+    if (img && entry) return img->read(*entry, offset, dst, size) == size;
+    return false;
+}
+
 bool File::open(const std::string& host_path, std::string& error) {
     f = plat::fopen_utf8(host_path, "rb");
     if (!f) return error = "cannot open " + host_path, false;
+    return parse_moov(error);
+}
+
+bool File::open(const nxi::GameImage* image, const nxi::GameImage::Entry* e, std::string& error) {
+    if (!image || !e || e->dir) return error = "not in game image", false;
+    img = image;
+    entry = e;
+    return parse_moov(error);
+}
+
+bool File::parse_moov(std::string& error) {
     // Top-level boxes: find moov.
     uint64_t at = 0;
     std::vector<uint8_t> moov;
     for (;;) {
         uint8_t h[16];
-        if (!seek(f, at) || std::fread(h, 1, 8, f) != 8) break;
+        if (!read_at(at, h, 8)) break;
         uint64_t size = be32(h);
         uint32_t type = be32(h + 4);
         uint64_t head = 8;
         if (size == 1) {
-            if (std::fread(h + 8, 1, 8, f) != 8) break;
+            if (!read_at(at + 8, h + 8, 8)) break;
             size = be64(h + 8), head = 16;
         }
         if (size == 0 || size < head) break;
         if (type == fourcc("moov")) {
             if (size > (256ull << 20)) return error = "moov too big", false;
             moov.resize(size_t(size - head));
-            if (std::fread(moov.data(), 1, moov.size(), f) != moov.size()) return error = "short moov", false;
+            if (!read_at(at + head, moov.data(), moov.size())) return error = "short moov", false;
             break;
         }
         at += size;
@@ -313,7 +330,7 @@ bool File::open(const std::string& host_path, std::string& error) {
 
 bool File::read(const Track& t, const Sample& s, std::vector<uint8_t>& out) {
     out.resize(s.size);
-    if (!f || !seek(f, s.offset) || std::fread(out.data(), 1, s.size, f) != s.size) return false;
+    if (!read_at(s.offset, out.data(), s.size)) return false;
     if (!t.video) return true;
     // Length-prefixed NAL units -> start codes. Four-byte lengths are replaced in place.
     const int L = t.nal_length_size;

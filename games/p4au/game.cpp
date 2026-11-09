@@ -46,6 +46,16 @@ void fputs_logged(CPU& c) {
     else c.x[0] = 0;
 }
 
+// nninitStartup initializes g_StandardAllocator with isCacheEnabled = true. When P4AU calls operator new[](0) ->
+// malloc(0), TlsHeapCache::Allocate(0) returns nullptr, which makes StandardAllocator::Allocate flush the thread's
+// TlsHeapCache (TlsHeapCache::Finalize -> UncacheSmallMemoryList) and corrupts cross-thread free lists. Disabling the
+// thread-local cache makes StandardAllocator use CentralHeap directly under its lock.
+void std_alloc_init(CPU& c) {
+    static const uint64_t real = find_symbol("_ZN2nn3mem17StandardAllocator10InitializeEPvmb");
+    c.x[3] = 0;
+    if (real) call(c, real);
+}
+
 // ---- debugging hooks (NX_P4AU_DEBUG=1) ----
 uint64_t g_main = 0;
 Fn g_orig_b1470 = nullptr, g_orig_563c = nullptr;
@@ -228,6 +238,7 @@ int battle_state(uint32_t* w, int max) {
 }  // namespace
 
 NX_HLE("fputs", fputs_logged);
+NX_HLE("_ZN2nn3mem17StandardAllocator10InitializeEPvmb", std_alloc_init);
 
 NX_HLE("glslcInitialize", glslc_fail);
 NX_HLE("glslcCompile", glslc_fail);

@@ -227,6 +227,18 @@ uint64_t touch_hit(float x, float y, float aspect) {
         float d = std::hypot((x - b[k].x) * aspect, y - b[k].y) / b[k].r;
         if (d < 1.35f && d < best_d) best = b[k].button, best_d = d;  // a little past the drawn edge still counts
     }
+    constexpr uint64_t kDpadV = kUp | kDown, kDpadH = kLeft | kRight;
+    if (best & (kDpadV | kDpadH)) {
+        uint64_t ortho_mask = (best & kDpadV) ? kDpadH : kDpadV;
+        uint64_t ortho = 0;
+        float ortho_d = 1.55f;
+        for (size_t k = 0; k < n; k++) {
+            if (!(b[k].button & ortho_mask)) continue;
+            float d = std::hypot((x - b[k].x) * aspect, y - b[k].y) / b[k].r;
+            if (d < ortho_d) ortho = b[k].button, ortho_d = d;
+        }
+        best |= ortho;
+    }
     return best;
 }
 

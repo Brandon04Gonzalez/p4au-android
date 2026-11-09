@@ -218,6 +218,7 @@ struct Decoder {
     uint32_t plane_off[3] = {}, plane_col[3] = {}, plane_row[3] = {};
     bool eos_sent = false;   // the game's end of stream went to the codec
     bool codec_eos = false;  // the end-of-stream picture came out
+    bool sw_fallback = false;
 #endif
 
     // CriVpdSwitch puts its UV texture right after width x height bytes of Y, whatever offsets we report: rows of
@@ -347,6 +348,8 @@ void read_codec_format(Decoder& d) {
     AMediaFormat_delete(f);
 }
 
+AMediaCodec* make_codec(const Decoder& d, bool force_sw = false);
+
 // Feeds the codec what it will take, then takes its pictures into free output slots (waiting up to `wait_us` for the
 // first). True when an output became ready.
 bool pump(Decoder& d, int64_t wait_us) {
@@ -372,6 +375,17 @@ bool pump(Decoder& d, int64_t wait_us) {
             continue;
         }
         if (o == AMEDIACODEC_INFO_OUTPUT_BUFFERS_CHANGED) continue;
+        if (o < -10 && !d.sw_fallback) {
+            d.sw_fallback = true;
+            AMediaCodec_stop(d.codec);
+            AMediaCodec_delete(d.codec);
+            d.codec = make_codec(d, true);
+            if (d.codec && AMediaCodec_start(d.codec) != AMEDIA_OK) {
+                AMediaCodec_delete(d.codec);
+                d.codec = nullptr;
+            }
+            break;
+        }
         if (o < 0) break;
         size_t size = 0;
         uint8_t* buf = AMediaCodec_getOutputBuffer(d.codec, size_t(o), &size);
@@ -397,40 +411,48 @@ bool pump(Decoder& d, int64_t wait_us) {
 
 // The device's decoder for the stream (VP9 for P5R's CRI films; H.264 and AAC from P4AU's MP4 films), configured for
 // it (null: none, black frames or silence).
-AMediaCodec* make_codec(const Decoder& d) {
+AMediaCodec* make_codec(const Decoder& d, bool force_sw) {
     const char* mime = d.mime.empty() ? "video/x-vnd.on2.vp9" : d.mime.c_str();
-    AMediaCodec* c = AMediaCodec_createDecoderByType(mime);
-    if (!c) {
-        log("movie: no %s decoder on this device", mime);
-        return nullptr;
+    auto configure_one = [&](AMediaCodec* c) -> AMediaCodec* {
+        if (!c) return nullptr;
+        AMediaFormat* f = AMediaFormat_new();
+        AMediaFormat_setString(f, AMEDIAFORMAT_KEY_MIME, mime);
+        if (d.audio) {
+            AMediaFormat_setInt32(f, AMEDIAFORMAT_KEY_SAMPLE_RATE, d.sample_rate);
+            AMediaFormat_setInt32(f, AMEDIAFORMAT_KEY_CHANNEL_COUNT, d.channels);
+            AMediaFormat_setInt32(f, "is-adts", 0);
+        } else {
+            AMediaFormat_setInt32(f, AMEDIAFORMAT_KEY_WIDTH, d.width);
+            AMediaFormat_setInt32(f, AMEDIAFORMAT_KEY_HEIGHT, d.height);
+            AMediaFormat_setInt32(f, AMEDIAFORMAT_KEY_COLOR_FORMAT, 0x7F420888);  // COLOR_FormatYUV420Flexible
+        }
+        AMediaFormat_setInt32(f, AMEDIAFORMAT_KEY_MAX_INPUT_SIZE, d.max_input);
+        if (!d.csd0.empty()) AMediaFormat_setBuffer(f, "csd-0", const_cast<char*>(d.csd0.data()), d.csd0.size());
+        if (!d.csd1.empty()) AMediaFormat_setBuffer(f, "csd-1", const_cast<char*>(d.csd1.data()), d.csd1.size());
+        media_status_t st = AMediaCodec_configure(c, f, nullptr, nullptr, 0);
+        AMediaFormat_delete(f);
+        if (st != AMEDIA_OK) {
+            AMediaCodec_delete(c);
+            return nullptr;
+        }
+        char* name = nullptr;
+        if (AMediaCodec_getName(c, &name) == AMEDIA_OK && name) {
+            log("movie: %s decoder %s", mime, name);
+            AMediaCodec_releaseName(c, name);
+        }
+        return c;
+    };
+    if (!force_sw) {
+        if (AMediaCodec* c = configure_one(AMediaCodec_createDecoderByType(mime))) return c;
     }
-    AMediaFormat* f = AMediaFormat_new();
-    AMediaFormat_setString(f, AMEDIAFORMAT_KEY_MIME, mime);
-    if (d.audio) {
-        AMediaFormat_setInt32(f, AMEDIAFORMAT_KEY_SAMPLE_RATE, d.sample_rate);
-        AMediaFormat_setInt32(f, AMEDIAFORMAT_KEY_CHANNEL_COUNT, d.channels);
-        AMediaFormat_setInt32(f, "is-adts", 0);
-    } else {
-        AMediaFormat_setInt32(f, AMEDIAFORMAT_KEY_WIDTH, d.width);
-        AMediaFormat_setInt32(f, AMEDIAFORMAT_KEY_HEIGHT, d.height);
-        AMediaFormat_setInt32(f, AMEDIAFORMAT_KEY_COLOR_FORMAT, 0x7F420888);  // COLOR_FormatYUV420Flexible
+    const char* sw_names[2] = {"c2.android.vp9.decoder", "OMX.google.vp9.decoder"};
+    if (std::strcmp(mime, "video/avc") == 0) sw_names[0] = "c2.android.avc.decoder", sw_names[1] = "OMX.google.h264.decoder";
+    else if (std::strcmp(mime, "audio/mp4a-latm") == 0) sw_names[0] = "c2.android.aac.decoder", sw_names[1] = "OMX.google.aac.decoder";
+    for (const char* sw : sw_names) {
+        if (AMediaCodec* c = configure_one(AMediaCodec_createCodecByName(sw))) return c;
     }
-    AMediaFormat_setInt32(f, AMEDIAFORMAT_KEY_MAX_INPUT_SIZE, d.max_input);
-    if (!d.csd0.empty()) AMediaFormat_setBuffer(f, "csd-0", const_cast<char*>(d.csd0.data()), d.csd0.size());
-    if (!d.csd1.empty()) AMediaFormat_setBuffer(f, "csd-1", const_cast<char*>(d.csd1.data()), d.csd1.size());
-    media_status_t st = AMediaCodec_configure(c, f, nullptr, nullptr, 0);
-    AMediaFormat_delete(f);
-    if (st != AMEDIA_OK) {
-        log("movie: the %s decoder refused %dx%d / %d Hz (%d): no decoding", mime, d.width, d.height, d.sample_rate, int(st));
-        AMediaCodec_delete(c);
-        return nullptr;
-    }
-    char* name = nullptr;
-    if (AMediaCodec_getName(c, &name) == AMEDIA_OK && name) {
-        log("movie: %s decoder %s", mime, name);
-        AMediaCodec_releaseName(c, name);
-    }
-    return c;
+    log("movie: no working %s decoder for %dx%d / %d Hz", mime, d.width, d.height, d.sample_rate);
+    return nullptr;
 }
 #endif
 
@@ -645,9 +667,14 @@ void DecoderStart(CPU& c) {
             input_event = d->events[kInputAvailable];
 #if defined(__ANDROID__)
             if (d->codec && AMediaCodec_start(d->codec) != AMEDIA_OK) {
-                log("movie: the VP9 decoder did not start: black frames");
                 AMediaCodec_delete(d->codec);
-                d->codec = nullptr;
+                d->sw_fallback = true;
+                d->codec = make_codec(*d, true);
+                if (d->codec && AMediaCodec_start(d->codec) != AMEDIA_OK) {
+                    log("movie: the decoder did not start: black frames");
+                    AMediaCodec_delete(d->codec);
+                    d->codec = nullptr;
+                }
             }
 #endif
         }
@@ -1029,7 +1056,12 @@ void ExtractorSetDataSource(CPU& c) {
     e->path = reinterpret_cast<const char*>(c.x[1]);
     std::string host = guest_to_host_path(e->path), error;
     auto f = std::make_unique<mp4::File>();
-    if (host.empty() || !f->open(host, error)) {
+    bool ok = !host.empty() && f->open(host, error);
+    if (!ok) {
+        if (const nxi::GameImage::Entry* ie = guest_to_image_entry(e->path))
+            ok = f->open(game_image(), ie, error);
+    }
+    if (!ok) {
         log("movie: Extractor: %s (%s): %s", e->path.c_str(), host.c_str(), error.c_str());
         return void(c.x[0] = kStatusError);
     }

@@ -99,8 +99,10 @@ void bind_vertex(VkCommandBuffer cb, uint32_t binding, const Upload& u) {
 void set_dynamic(VkCommandBuffer cb, const VkViewport& vp, const VkRect2D& sc) {
     Bound& b = g_bound;
     const State& s = g_state;
-    uint32_t raster[10] = {s.stencil_ref[0],        s.stencil_ref[1],        s.stencil_compare_mask[0],
-                          s.stencil_compare_mask[1], s.stencil_write_mask[0], s.stencil_write_mask[1]};
+    uint32_t s_ref = s.stencil_ref[0] ? s.stencil_ref[0] : s.stencil_ref[1];
+    uint32_t s_cmask = (s.stencil_compare_mask[0] != 0xFF) ? s.stencil_compare_mask[0] : s.stencil_compare_mask[1];
+    uint32_t s_wmask = (s.stencil_write_mask[0] != 0xFF) ? s.stencil_write_mask[0] : s.stencil_write_mask[1];
+    uint32_t raster[10] = {s_ref, s_ref, s_cmask, s_cmask, s_wmask, s_wmask};
     std::memcpy(raster + 6, &s.bias_factor, 4), std::memcpy(raster + 7, &s.bias_units, 4);
     std::memcpy(raster + 8, &s.bias_clamp, 4);
     bool slack = s.depth.depth_test && equal_slack_pass(s.depth);
@@ -548,6 +550,7 @@ bool draw(VkCommandBuffer cb, const Targets& t, uint32_t mode, bool indexed, con
     if (g_bound.pipeline != pipeline) {
         p_vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
         g_bound.pipeline = pipeline, g_state_set++;
+        std::memset(g_bound.raster, 0xFF, sizeof g_bound.raster);
     } else {
         g_state_kept++;
     }
