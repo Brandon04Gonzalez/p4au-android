@@ -54,6 +54,8 @@ import java.util.Map;
  *   FPS counter off (default) or on (NX_SHOW_FPS)
  *   on-screen controls on (default) or off (NX_TOUCH_SHOW), their size (NX_TOUCH_SIZE) and opacity (NX_TOUCH_OPACITY),
  *               and where they are (NX_TOUCH_LAYOUT, written by ControlsEditor)
+ *   gamepad     physical controller buttons by position, Nintendo (NX_GAMEPAD_LAYOUT=0, default: the bottom button is
+ *               B) or Xbox/PC (NX_GAMEPAD_LAYOUT=1: the bottom button is A)
  * The frame rate is always the game's 60 fps (NX_FPS_CAP=60): a fighting game's logic counts frames.
  * Other lines of config.txt are kept as they were. A private build for the owner of the game: never published.
  */
@@ -431,6 +433,10 @@ public class Launcher extends Activity {
         options.add(new Option("NX_TOUCH_OPACITY", "Opacidad de los botones", "Button opacity",
                 new String[] {"50", "85", "100"}, new String[] {"Baja", "Normal", "Alta"},
                 new String[] {"Low", "Normal", "High"}, 1));
+        options.add(new Option("NX_GAMEPAD_LAYOUT", "Botones del mando físico", "Physical gamepad buttons",
+                new String[] {"0", "1"},
+                new String[] {"Nintendo (A dcha, B abajo)", "Xbox / PC (A abajo, B dcha)"},
+                new String[] {"Nintendo (A right, B down)", "Xbox / PC (A down, B right)"}, 0));
         build();
     }
 
