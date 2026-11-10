@@ -9,8 +9,7 @@ Switch and Android phones share the same CPU architecture (AArch64).
 prepare the game once, and play. The game is read from your file as it is; nothing is extracted.
 
 > [!NOTE]
-> **Online play is coming soon** as an option of its own. This release plays offline: Arcade, Story and Versus (also two
-> players on one device with two controllers). Meanwhile, the best thing to do is train.
+> **Multiplayer:** This release includes Arcade, Story, and Versus mode (two players on one device with two controllers, or local play). Centralized internet matchmaking servers are not supported.
 
 > [!IMPORTANT]
 > **No game files are included, here or in the APK.** This repository and its releases hold no game code, assets,
@@ -102,9 +101,7 @@ Una app de Android que ejecuta **tu propia copia** de Persona 4 Arena Ultimax (S
 tablet arm64. **No hace falta PC.** El APK no lleva nada del juego: lo lee de tu propio archivo.
 
 > [!NOTE]
-> **Muy pronto saldrá una opción para jugar en línea.** Esta versión es sin conexión: Arcade, Historia y Versus (también
-> dos jugadores en un mismo dispositivo con dos mandos). Mientras tanto, recomendamos que
-> vayan entrenando.
+> **Modo multijugador:** Esta versión incluye modos Arcade, Historia y Versus (dos jugadores en un mismo dispositivo con dos mandos, o juego local). No se incluye soporte para servidores externos en línea por internet.
 
 - **Discord** (canales en español e inglés), para novedades, ayuda y pruebas: https://discord.gg/rMgRneBTCe
 - **Apoyar al desarrollador (opcional):** [GitHub Sponsors](https://github.com/sponsors/Brandon04Gonzalez). Los ports
