@@ -227,6 +227,15 @@ void clears_begin_submit();
 void clears_log();
 bool pass_open();  // a render pass is being recorded
 // Render pass and framebuffer objects instead of dynamic rendering (nvn_renderpass.cpp, NX_RENDER_PASS_OBJECTS).
+inline bool format_has_stencil(VkFormat f) {
+    return f == VK_FORMAT_D32_SFLOAT_S8_UINT || f == VK_FORMAT_D24_UNORM_S8_UINT || f == VK_FORMAT_S8_UINT ||
+           f == VK_FORMAT_D16_UNORM_S8_UINT;
+}
+inline bool format_has_depth(VkFormat f) {
+    return f == VK_FORMAT_D32_SFLOAT || f == VK_FORMAT_D32_SFLOAT_S8_UINT || f == VK_FORMAT_D24_UNORM_S8_UINT ||
+           f == VK_FORMAT_D16_UNORM || f == VK_FORMAT_D16_UNORM_S8_UINT || f == VK_FORMAT_X8_D24_UNORM_PACK32;
+}
+
 bool render_pass_objects();
 VkFormat unused_slot_format();  // a pipeline's format for a colour slot with no image
 VkRenderPass compatible_render_pass(uint32_t count, const VkFormat* colors, VkFormat depth);

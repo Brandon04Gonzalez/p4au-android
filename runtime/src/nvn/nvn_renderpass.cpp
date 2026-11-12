@@ -34,11 +34,6 @@ struct FramebufferKey {
 std::map<FramebufferKey, VkFramebuffer> g_framebuffers;
 uint64_t g_framebuffers_made = 0;
 
-bool has_stencil(VkFormat f) {
-    return f == VK_FORMAT_D32_SFLOAT_S8_UINT || f == VK_FORMAT_D24_UNORM_S8_UINT || f == VK_FORMAT_S8_UINT ||
-           f == VK_FORMAT_D16_UNORM_S8_UINT;
-}
-
 VkRenderPass make_pass(const PassKey& k, uint32_t count) {
     VkAttachmentDescription att[9]{};
     VkAttachmentReference refs[8]{}, dref{};
@@ -68,7 +63,7 @@ VkRenderPass make_pass(const PassKey& k, uint32_t count) {
         a.samples = VK_SAMPLE_COUNT_1_BIT;
         a.loadOp = k[18] ? VkAttachmentLoadOp(k[18] - 1) : VK_ATTACHMENT_LOAD_OP_LOAD;
         a.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-        bool st = has_stencil(VkFormat(k[8]));
+        bool st = format_has_stencil(VkFormat(k[8]));
         a.stencilLoadOp = !st ? VK_ATTACHMENT_LOAD_OP_DONT_CARE
                               : k[19] ? VkAttachmentLoadOp(k[19] - 1) : VK_ATTACHMENT_LOAD_OP_LOAD;
         a.stencilStoreOp = st ? VK_ATTACHMENT_STORE_OP_STORE : VK_ATTACHMENT_STORE_OP_DONT_CARE;

@@ -99,10 +99,8 @@ void bind_vertex(VkCommandBuffer cb, uint32_t binding, const Upload& u) {
 void set_dynamic(VkCommandBuffer cb, const VkViewport& vp, const VkRect2D& sc) {
     Bound& b = g_bound;
     const State& s = g_state;
-    uint32_t s_ref = s.stencil_ref[0] ? s.stencil_ref[0] : s.stencil_ref[1];
-    uint32_t s_cmask = (s.stencil_compare_mask[0] != 0xFF) ? s.stencil_compare_mask[0] : s.stencil_compare_mask[1];
-    uint32_t s_wmask = (s.stencil_write_mask[0] != 0xFF) ? s.stencil_write_mask[0] : s.stencil_write_mask[1];
-    uint32_t raster[10] = {s_ref, s_ref, s_cmask, s_cmask, s_wmask, s_wmask};
+    uint32_t raster[10] = {s.stencil_ref[0],        s.stencil_ref[1],        s.stencil_compare_mask[0],
+                          s.stencil_compare_mask[1], s.stencil_write_mask[0], s.stencil_write_mask[1]};
     std::memcpy(raster + 6, &s.bias_factor, 4), std::memcpy(raster + 7, &s.bias_units, 4);
     std::memcpy(raster + 8, &s.bias_clamp, 4);
     bool slack = s.depth.depth_test && equal_slack_pass(s.depth);
@@ -716,6 +714,7 @@ void pass_end_only(VkCommandBuffer cb, int reason) {
     else
         p_vkCmdEndRendering(cb);
     g_rendering = false;
+    g_bound = Bound{};  // each render pass instance requires pipelines and dynamic state to be bound
     // What the pass wrote is read by what follows (sampled, copied, loaded by the next pass), and what it sampled may
     // be rendered over next. The images stay GENERAL, so transition() records no barrier. Metal (MoltenVK) and the
     // Intel driver ordered passes anyway; NVIDIA overlaps them, and later passes read half-written tiles: the course

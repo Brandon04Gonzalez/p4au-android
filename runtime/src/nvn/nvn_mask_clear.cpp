@@ -210,8 +210,8 @@ VkPipeline pipeline(const Key& key) {
     VkPipelineRenderingCreateInfo ri{VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO};
     ri.colorAttachmentCount = key.count;
     ri.pColorAttachmentFormats = key.colors;
-    bool stencil = key.depth == VK_FORMAT_D32_SFLOAT_S8_UINT || key.depth == VK_FORMAT_S8_UINT;
-    ri.depthAttachmentFormat = key.depth == VK_FORMAT_S8_UINT ? VK_FORMAT_UNDEFINED : key.depth;
+    bool stencil = format_has_stencil(key.depth);
+    ri.depthAttachmentFormat = format_has_depth(key.depth) ? key.depth : VK_FORMAT_UNDEFINED;
     ri.stencilAttachmentFormat = stencil ? key.depth : VK_FORMAT_UNDEFINED;
     VkGraphicsPipelineCreateInfo ci{VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO};
     ci.pNext = &ri;
