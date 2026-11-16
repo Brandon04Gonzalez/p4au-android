@@ -56,7 +56,75 @@ namespace nx::plat {
 
 namespace {
 std::mutex g_in;
-PadState g_pad_buttons;  // controller state
+PadState g_pads[2];        // physical controller slots (P1, P2) keyed by Android InputDevice id
+PadState g_kbd_buttons;    // non-gamepad keyboard / system buttons (routed to P1)
+int32_t g_pad_dev[2] = {-1, -1};
+JavaVM* g_vm = nullptr;
+jclass g_input_dev_cls = nullptr;
+jmethodID g_get_dev_mid = nullptr;
+
+void init_jni(android_app* app) {
+    if (g_get_dev_mid || !app || !app->activity || !app->activity->vm) return;
+    g_vm = app->activity->vm;
+    JNIEnv* env = nullptr;
+    bool attached = false;
+    jint st = g_vm->GetEnv(reinterpret_cast<void**>(&env), JNI_VERSION_1_6);
+    if (st == JNI_EDETACHED) {
+        if (g_vm->AttachCurrentThread(&env, nullptr) != JNI_OK || !env) return;
+        attached = true;
+    } else if (st != JNI_OK || !env) {
+        return;
+    }
+    jclass cls = env->FindClass("android/view/InputDevice");
+    if (cls) {
+        g_input_dev_cls = static_cast<jclass>(env->NewGlobalRef(cls));
+        g_get_dev_mid = env->GetStaticMethodID(g_input_dev_cls, "getDevice", "(I)Landroid/view/InputDevice;");
+        env->DeleteLocalRef(cls);
+    }
+    if (env->ExceptionCheck()) env->ExceptionClear();
+    if (attached) g_vm->DetachCurrentThread();
+}
+
+bool device_connected(int32_t dev_id) {
+    if (dev_id < 0 || !g_vm || !g_input_dev_cls || !g_get_dev_mid) return dev_id >= 0;
+    JNIEnv* env = nullptr;
+    bool attached = false;
+    jint st = g_vm->GetEnv(reinterpret_cast<void**>(&env), JNI_VERSION_1_6);
+    if (st == JNI_EDETACHED) {
+        if (g_vm->AttachCurrentThread(&env, nullptr) != JNI_OK || !env) return true;
+        attached = true;
+    } else if (st != JNI_OK || !env) {
+        return true;
+    }
+    jobject dev = env->CallStaticObjectMethod(g_input_dev_cls, g_get_dev_mid, static_cast<jint>(dev_id));
+    bool ok = dev != nullptr;
+    if (dev) env->DeleteLocalRef(dev);
+    if (env->ExceptionCheck()) {
+        env->ExceptionClear();
+        ok = true;
+    }
+    if (attached) g_vm->DetachCurrentThread();
+    return ok;
+}
+
+int slot_for_device(int32_t dev, bool can_claim) {
+    if (dev == g_pad_dev[0]) return 0;
+    if (dev == g_pad_dev[1]) return 1;
+    if (!can_claim || dev < 0) return -1;
+    if (g_pad_dev[0] < 0 || !device_connected(g_pad_dev[0])) {
+        g_pad_dev[0] = dev;
+        g_pads[0] = PadState{};
+        log("hid: android pad 1 claimed device %d", dev);
+        return 0;
+    }
+    if (g_pad_dev[1] < 0 || !device_connected(g_pad_dev[1])) {
+        g_pad_dev[1] = dev;
+        g_pads[1] = PadState{};
+        log("hid: android pad 2 claimed device %d (pad 1 is %d)", dev, g_pad_dev[0]);
+        return 1;
+    }
+    return -1;
+}
 enum Stick : uint8_t { kNoStick, kLeftStick, kRightStick };
 struct Touch {
     int32_t id;
@@ -181,23 +249,36 @@ uint64_t touch_button(float x, float y) {
 
 }  // namespace
 
-int32_t on_input(android_app*, AInputEvent* e) {
+int32_t on_input(android_app* app, AInputEvent* e) {
     std::lock_guard lk(g_in);
+    init_jni(app);
     int32_t type = AInputEvent_getType(e);
     int32_t src = AInputEvent_getSource(e);
+    int32_t dev = AInputEvent_getDeviceId(e);
     if (type == AINPUT_EVENT_TYPE_KEY) {
         uint64_t b = key_to_button(AKeyEvent_getKeyCode(e));
         if (!b) return 0;
+        int32_t action = AKeyEvent_getAction(e);
+        const bool is_pad_src =
+            (src & (AINPUT_SOURCE_GAMEPAD | AINPUT_SOURCE_JOYSTICK | AINPUT_SOURCE_DPAD)) != 0;
+        if (!is_pad_src) {
+            if (action == AKEY_EVENT_ACTION_DOWN)
+                g_kbd_buttons.buttons |= b;
+            else if (action == AKEY_EVENT_ACTION_UP)
+                g_kbd_buttons.buttons &= ~b;
+            return 1;
+        }
+        int slot = slot_for_device(dev, action == AKEY_EVENT_ACTION_DOWN);
+        if (slot < 0) return 0;
         g_gamepad = true;
-        if (AKeyEvent_getAction(e) == AKEY_EVENT_ACTION_DOWN)
-            g_pad_buttons.buttons |= b;
-        else if (AKeyEvent_getAction(e) == AKEY_EVENT_ACTION_UP)
-            g_pad_buttons.buttons &= ~b;
+        if (action == AKEY_EVENT_ACTION_DOWN)
+            g_pads[slot].buttons |= b;
+        else if (action == AKEY_EVENT_ACTION_UP)
+            g_pads[slot].buttons &= ~b;
         return 1;
     }
     if (type != AINPUT_EVENT_TYPE_MOTION) return 0;
     if ((src & AINPUT_SOURCE_JOYSTICK) == AINPUT_SOURCE_JOYSTICK) {
-        g_gamepad = true;
         // Radial 2D deadzone so circular physical sticks still reach 100% magnitude on diagonals.
         auto stick_axes = [&](int32_t ax, int32_t ay, int32_t& out_x, int32_t& out_y) {
             float x = AMotionEvent_getAxisValue(e, ax, 0);
@@ -215,25 +296,33 @@ int32_t on_input(android_app*, AInputEvent* e) {
             out_x = int32_t(std::clamp(x * inv, -1.f, 1.f) * kStickMax);
             out_y = int32_t(std::clamp(y * inv, -1.f, 1.f) * kStickMax);
         };
-        stick_axes(AMOTION_EVENT_AXIS_X, AMOTION_EVENT_AXIS_Y, g_pad_buttons.lx, g_pad_buttons.ly);
-        int32_t rx = 0, ry = 0;
+        int32_t lx = 0, ly = 0, rx = 0, ry = 0;
+        stick_axes(AMOTION_EVENT_AXIS_X, AMOTION_EVENT_AXIS_Y, lx, ly);
         stick_axes(AMOTION_EVENT_AXIS_Z, AMOTION_EVENT_AXIS_RZ, rx, ry);
         if (!rx && !ry) stick_axes(AMOTION_EVENT_AXIS_RX, AMOTION_EVENT_AXIS_RY, rx, ry);
-        g_pad_buttons.rx = rx;
-        g_pad_buttons.ry = ry;
         float hx = AMotionEvent_getAxisValue(e, AMOTION_EVENT_AXIS_HAT_X, 0);
         float hy = AMotionEvent_getAxisValue(e, AMOTION_EVENT_AXIS_HAT_Y, 0);
-        g_pad_buttons.buttons &= ~(kLeft | kRight | kUp | kDown | kZL | kZR);
-        if (hx < -0.5f) g_pad_buttons.buttons |= kLeft;
-        if (hx > 0.5f) g_pad_buttons.buttons |= kRight;
-        if (hy < -0.5f) g_pad_buttons.buttons |= kUp;
-        if (hy > 0.5f) g_pad_buttons.buttons |= kDown;
+        uint64_t motion_btns = 0;
+        if (hx < -0.5f) motion_btns |= kLeft;
+        if (hx > 0.5f) motion_btns |= kRight;
+        if (hy < -0.5f) motion_btns |= kUp;
+        if (hy > 0.5f) motion_btns |= kDown;
         if (AMotionEvent_getAxisValue(e, AMOTION_EVENT_AXIS_LTRIGGER, 0) > 0.4f ||
             AMotionEvent_getAxisValue(e, AMOTION_EVENT_AXIS_BRAKE, 0) > 0.4f)
-            g_pad_buttons.buttons |= kZL;
+            motion_btns |= kZL;
         if (AMotionEvent_getAxisValue(e, AMOTION_EVENT_AXIS_RTRIGGER, 0) > 0.4f ||
             AMotionEvent_getAxisValue(e, AMOTION_EVENT_AXIS_GAS, 0) > 0.4f)
-            g_pad_buttons.buttons |= kZR;
+            motion_btns |= kZR;
+        const bool active = (lx || ly || rx || ry || motion_btns != 0);
+        int slot = slot_for_device(dev, active);
+        if (slot < 0) return 0;
+        g_gamepad = true;
+        PadState& dst = g_pads[slot];
+        dst.lx = lx;
+        dst.ly = ly;
+        dst.rx = rx;
+        dst.ry = ry;
+        dst.buttons = (dst.buttons & ~(kLeft | kRight | kUp | kDown | kZL | kZR)) | motion_btns;
         return 1;
     }
     if ((src & AINPUT_SOURCE_TOUCHSCREEN) != AINPUT_SOURCE_TOUCHSCREEN) return 0;
@@ -331,13 +420,13 @@ bool headless() {  // NX_HEADLESS (platform.h)
 
 void read_pad(PadState& p) {
     std::lock_guard lk(g_in);
-    p.buttons |= g_pad_buttons.buttons;
-    if (g_pad_buttons.lx || g_pad_buttons.ly) {
-        p.lx = g_pad_buttons.lx;
-        p.ly = g_pad_buttons.ly;
+    p.buttons |= g_pads[0].buttons | g_kbd_buttons.buttons;
+    if (g_pads[0].lx || g_pads[0].ly) {
+        p.lx = g_pads[0].lx;
+        p.ly = g_pads[0].ly;
     }
-    p.rx = g_pad_buttons.rx;
-    p.ry = g_pad_buttons.ry;
+    p.rx = g_pads[0].rx;
+    p.ry = g_pads[0].ry;
     float radius = std::max(1.f, g_h * 0.12f);
     size_t drawn = 0;
     touch_buttons(drawn);
@@ -365,6 +454,31 @@ void read_pad(PadState& p) {
         }
     }
     input_script(p);  // NX_INPUT_SCRIPT (config.txt): scripted runs on the phone, as on the Mac
+}
+
+bool read_pad2(PadState& p) {
+    static uint64_t next_check_ns = 0;
+    std::lock_guard lk(g_in);
+    if (g_pad_dev[1] < 0) return false;
+    const uint64_t now = monotonic_ns();
+    if (now >= next_check_ns) {
+        next_check_ns = now + 2'000'000'000ull;
+        if (!device_connected(g_pad_dev[1])) {
+            log("hid: android pad 2 disconnected (device %d)", g_pad_dev[1]);
+            g_pad_dev[1] = -1;
+            g_pads[1] = PadState{};
+            return false;
+        }
+    }
+    p.buttons |= g_pads[1].buttons;
+    if (g_pads[1].lx || g_pads[1].ly) {
+        p.lx = g_pads[1].lx;
+        p.ly = g_pads[1].ly;
+    }
+    p.rx = g_pads[1].rx;
+    p.ry = g_pads[1].ry;
+    input_script(p, 1);  // NX_INPUT_SCRIPT_P2
+    return true;
 }
 
 // The drawn layout's buttons (brighter while pressed) and the stick under the thumb; nothing while a controller is

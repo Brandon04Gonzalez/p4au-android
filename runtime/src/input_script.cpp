@@ -113,8 +113,8 @@ void input_script(PadState& p, int player) {
         }
 }
 
-#ifndef _WIN32
-bool read_pad2(PadState&) { return false; }  // platform.h: only Windows gives player 2 a host pad of its own
+#if !defined(_WIN32) && !defined(__ANDROID__)
+bool read_pad2(PadState&) { return false; }  // platform.h: Windows and Android give player 2 a host pad of its own
 #endif
 
 }  // namespace nx::plat

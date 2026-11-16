@@ -310,7 +310,7 @@ void BindNpadStyleSetUpdateEvent(CPU& c) {  // (const u32& id, SystemEventType*,
 
 void GetVibrationDeviceHandles(CPU& c) { c.x[0] = 0; }  // no vibration devices
 void ShowControllerSupport(CPU& c) {                     // (ControllerSupportResultInfo*, const Arg&)
-    st<int8_t>(c.x[0], 1);        // player count
+    st<int8_t>(c.x[0], hid::connected(1) ? 2 : 1);        // player count
     st<uint32_t>(c.x[0] + 4, 0);  // selected npad id: No1
     c.x[0] = 0;
 }
