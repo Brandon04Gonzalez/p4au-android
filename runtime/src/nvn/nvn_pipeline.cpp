@@ -181,7 +181,7 @@ bool identity(const VkComponentMapping& m) {
 // height 1, since the translator samples them as 2D, G8). A shader declaring another shape than the texture it gets
 // (a samplerCube given a 2D texture) reads the dummy instead: Metal aborts on the view.
 bool view_compatible(const GpuImage& img, VkImageViewType type, uint32_t layers) {
-    bool cube_img = img.view_type == VK_IMAGE_VIEW_TYPE_CUBE || img.view_type == VK_IMAGE_VIEW_TYPE_CUBE_ARRAY;
+    bool cube_img = img.cube_compat || img.view_type == VK_IMAGE_VIEW_TYPE_CUBE || img.view_type == VK_IMAGE_VIEW_TYPE_CUBE_ARRAY;
     bool img3d = img.view_type == VK_IMAGE_VIEW_TYPE_3D;
     bool img1d = img.view_type == VK_IMAGE_VIEW_TYPE_1D || img.view_type == VK_IMAGE_VIEW_TYPE_1D_ARRAY;
     switch (type) {

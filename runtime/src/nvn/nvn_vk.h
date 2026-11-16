@@ -33,6 +33,7 @@ struct GpuImage {
     bool alpha_from_r = false;
     uint32_t nvn_format = 0;  // the texture's NVN format
     bool uw = false;          // NX_ULTRAWIDE: a widened render target (nvn_ultrawide.cpp)
+    bool cube_compat = false; // Square 2D_ARRAY with 6n layers may be sampled as a cube map
 };
 
 VkDevice vk_device();
